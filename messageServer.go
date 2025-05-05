@@ -139,7 +139,11 @@ func (server *Server) receiveDataFromRabbitMqServer(packageChan chan<- *core.Dat
 	case connectData = <-connectResult:
 	}
 
-	queue, _ := connectData.channel.QueueDeclare("", false, true, true, false, nil)
+	queueParameters := make(map[string]interface{})
+	queueParameters["x-max-length"] = 2000
+	queueParameters["x-message-ttl"] = 30000
+
+	queue, _ := connectData.channel.QueueDeclare("", false, true, true, false, queueParameters)
 
 	queueName := queue.Name
 	connectData.channel.QueueBind(queueName, "", server.exchangeName, false, nil)
