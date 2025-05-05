@@ -1,6 +1,7 @@
 package messageServer
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/imsat-spb/go-apkdk-core"
 	"github.com/streadway/amqp"
@@ -8,7 +9,6 @@ import (
 )
 
 type Server struct {
-	packageChan      chan *core.DataPackage
 	serverAddress    string
 	logger           core.Logger
 	messageServerUrl string
@@ -21,15 +21,10 @@ type Configuration struct {
 	UserName       string
 	Password       string
 	ExchangeName   string
-	BufferSize     int
 }
 
 func (server *Server) GetAddress() string {
 	return server.serverAddress
-}
-
-func (server *Server) GetChannel() chan<- *core.DataPackage {
-	return server.packageChan
 }
 
 func NewMessageServer(configuration *Configuration, logger core.Logger) (*Server, error) {
@@ -42,8 +37,7 @@ func NewMessageServer(configuration *Configuration, logger core.Logger) (*Server
 
 	messageServerUrl := fmt.Sprintf("amqp://%s:%s@%s/", configuration.UserName, configuration.Password, serverAddress)
 
-	result := &Server{packageChan: make(chan *core.DataPackage, configuration.BufferSize),
-		serverAddress:    serverAddress,
+	result := &Server{serverAddress: serverAddress,
 		exchangeName:     configuration.ExchangeName,
 		messageServerUrl: messageServerUrl,
 		logger:           logger}
@@ -97,7 +91,7 @@ func (server *Server) connectMessageQueueServer(result chan<- *messageServerConn
 
 }
 
-func (server *Server) sendDataToRabbitMqServer() {
+func (server *Server) sendDataToRabbitMqServer(packageChan <-chan *core.DataPackage) {
 	var connectData *messageServerConnectData = nil
 
 	connectResult := make(chan *messageServerConnectData, 1)
@@ -109,7 +103,7 @@ func (server *Server) sendDataToRabbitMqServer() {
 		select {
 		case connectData = <-connectResult:
 
-		case dataPackage := <-server.packageChan:
+		case dataPackage := <-packageChan:
 			if connectData == nil {
 				break
 			}
@@ -133,7 +127,45 @@ func (server *Server) sendDataToRabbitMqServer() {
 	}
 }
 
-func (server *Server) RunSender() error {
-	go server.sendDataToRabbitMqServer()
+func (server *Server) receiveDataFromRabbitMqServer(packageChan chan<- *core.DataPackage) {
+	var connectData *messageServerConnectData = nil
+
+	connectResult := make(chan *messageServerConnectData, 1)
+	defer close(connectResult)
+
+	go server.connectMessageQueueServer(connectResult)
+
+	select {
+	case connectData = <-connectResult:
+	}
+
+	queue, _ := connectData.channel.QueueDeclare("", false, true, true, false, nil)
+
+	queueName := queue.Name
+	connectData.channel.QueueBind(queueName, "", server.exchangeName, false, nil)
+
+	for {
+		messages, _ := connectData.channel.Consume(queue.Name, "", true, true, false, false, nil)
+
+		for msg := range messages {
+			var dataPackage core.DataPackage
+
+			r := bytes.NewReader(msg.Body)
+			readPackageError := dataPackage.Read(r)
+
+			if readPackageError == nil {
+				packageChan <- &dataPackage
+			}
+		}
+	}
+}
+
+func (server *Server) RunSender(packageChan <-chan *core.DataPackage) error {
+	go server.sendDataToRabbitMqServer(packageChan)
+	return nil
+}
+
+func (server *Server) RunReceiver(packageChan chan<- *core.DataPackage) error {
+	go server.receiveDataFromRabbitMqServer(packageChan)
 	return nil
 }
