@@ -164,12 +164,10 @@ func (server *Server) receiveDataFromRabbitMqServer(packageChan chan<- *core.Dat
 	}
 }
 
-func (server *Server) RunSender(packageChan <-chan *core.DataPackage) error {
-	go server.sendDataToRabbitMqServer(packageChan)
-	return nil
+func (server *Server) RunSender(packageChan <-chan *core.DataPackage) {
+	server.sendDataToRabbitMqServer(packageChan)
 }
 
-func (server *Server) RunReceiver(packageChan chan<- *core.DataPackage) error {
-	go server.receiveDataFromRabbitMqServer(packageChan)
-	return nil
+func (server *Server) RunReceiver(packageChan chan<- *core.DataPackage) {
+	server.receiveDataFromRabbitMqServer(packageChan)
 }
